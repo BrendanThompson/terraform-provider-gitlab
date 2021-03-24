@@ -155,7 +155,7 @@ func testAccGitlabRepositoryFileConfig(rInt int) string {
 	resource "gitlab_repository_file" "this" {
 	  project = "${gitlab_project.foo.id}"
 	  file = "meow.txt"
-		content = "meow"
+	  content = "meow"
 	  branch = "master"
 	  author_name = "Meow Meowington"
 	  author_email = "meow@catnip.com"
