@@ -23,6 +23,7 @@ website/node_modules
 *.iml
 *.test
 *.iml
+.envrc
 
 website/vendor
 
@@ -31,3 +32,4 @@ website/vendor
 !command/test-fixtures/**/.terraform/
 
 license/*
+Gitlab-license.txt

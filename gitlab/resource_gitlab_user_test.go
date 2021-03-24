@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestAccGitlabUser_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckGitlabGroupDestroy,
+		CheckDestroy: testAccCheckGitlabUserDestroy,
 		Steps: []resource.TestStep{
 			// Create a user
 			{
@@ -26,7 +27,7 @@ func TestAccGitlabUser_basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabUserExists("gitlab_user.foo", &user),
 					testAccCheckGitlabUserAttributes(&user, &testAccGitlabUserExpectedAttributes{
-						Email:            "listest%d@ssss.com",
+						Email:            fmt.Sprintf("listest%d@ssss.com", rInt),
 						Password:         fmt.Sprintf("test%dtt", rInt),
 						Username:         fmt.Sprintf("listest%d", rInt),
 						Name:             fmt.Sprintf("foo %d", rInt),
@@ -38,13 +39,13 @@ func TestAccGitlabUser_basic(t *testing.T) {
 					}),
 				),
 			},
-			// Update the user to change the name
+			// Update the user to change the name, email, projects_limit and more
 			{
 				Config: testAccGitlabUserUpdateConfig(rInt),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabUserExists("gitlab_user.foo", &user),
 					testAccCheckGitlabUserAttributes(&user, &testAccGitlabUserExpectedAttributes{
-						Email:            "listest%d@ssss.com",
+						Email:            fmt.Sprintf("listest%d@tttt.com", rInt),
 						Password:         fmt.Sprintf("test%dtt", rInt),
 						Username:         fmt.Sprintf("listest%d", rInt),
 						Name:             fmt.Sprintf("bar %d", rInt),
@@ -52,7 +53,8 @@ func TestAccGitlabUser_basic(t *testing.T) {
 						Admin:            true,
 						CanCreateGroup:   true,
 						SkipConfirmation: false,
-						External:         true,
+						External:         false,
+						Note:             fmt.Sprintf("note%d", rInt),
 					}),
 				),
 			},
@@ -62,7 +64,7 @@ func TestAccGitlabUser_basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabUserExists("gitlab_user.foo", &user),
 					testAccCheckGitlabUserAttributes(&user, &testAccGitlabUserExpectedAttributes{
-						Email:            "listest%d@ssss.com",
+						Email:            fmt.Sprintf("listest%d@ssss.com", rInt),
 						Password:         fmt.Sprintf("test%dtt", rInt),
 						Username:         fmt.Sprintf("listest%d", rInt),
 						Name:             fmt.Sprintf("foo %d", rInt),
@@ -80,7 +82,6 @@ func TestAccGitlabUser_basic(t *testing.T) {
 				ImportStateVerify: true,
 				ImportStateVerifyIgnore: []string{
 					"password",
-					"skip_confirmation",
 				},
 			},
 		},
@@ -96,7 +97,12 @@ func TestAccGitlabUser_password_reset(t *testing.T) {
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckGitlabGroupDestroy,
 		Steps: []resource.TestStep{
-			// Create a user
+			// Test that either password or reset_password is needed
+			{
+				Config:      testAccGitlabUserConfigWrong(rInt),
+				ExpectError: regexp.MustCompile("At least one of either password or reset_password must be defined"),
+			},
+			// Create a user without a password
 			{
 				Config: testAccGitlabUserConfigPasswordReset(rInt),
 				Check:  testAccCheckGitlabUserExists("gitlab_user.foo", &user),
@@ -139,6 +145,7 @@ type testAccGitlabUserExpectedAttributes struct {
 	CanCreateGroup   bool
 	SkipConfirmation bool
 	External         bool
+	Note             string
 }
 
 func testAccCheckGitlabUserAttributes(user *gitlab.User, want *testAccGitlabUserExpectedAttributes) resource.TestCheckFunc {
@@ -149,6 +156,30 @@ func testAccCheckGitlabUserAttributes(user *gitlab.User, want *testAccGitlabUser
 
 		if user.Username != want.Username {
 			return fmt.Errorf("got username %q; want %q", user.Username, want.Username)
+		}
+
+		if user.Email != want.Email {
+			return fmt.Errorf("got email %q; want %q", user.Email, want.Email)
+		}
+
+		if user.CanCreateGroup != want.CanCreateGroup {
+			return fmt.Errorf("got can_create_group %t; want %t", user.CanCreateGroup, want.CanCreateGroup)
+		}
+
+		if user.External != want.External {
+			return fmt.Errorf("got is_external %t; want %t", user.External, want.External)
+		}
+
+		if user.Note != want.Note {
+			return fmt.Errorf("got note %q; want %q", user.Note, want.Note)
+		}
+
+		if user.IsAdmin != want.Admin {
+			return fmt.Errorf("got is_admin %t; want %t", user.IsAdmin, want.Admin)
+		}
+
+		if user.ProjectsLimit != want.ProjectsLimit {
+			return fmt.Errorf("got projects_limit %d; want %d", user.ProjectsLimit, want.ProjectsLimit)
 		}
 
 		return nil
@@ -200,13 +231,14 @@ resource "gitlab_user" "foo" {
   name             = "bar %d"
   username         = "listest%d"
   password         = "test%dtt"
-  email            = "listest%d@ssss.com"
+  email            = "listest%d@tttt.com"
   is_admin         = true
   projects_limit   = 10
   can_create_group = true
-  is_external      = true
+  is_external      = false
+  note             = "note%d"
 }
-  `, rInt, rInt, rInt, rInt)
+  `, rInt, rInt, rInt, rInt, rInt)
 }
 
 func testAccGitlabUserConfigPasswordReset(rInt int) string {
@@ -214,13 +246,18 @@ func testAccGitlabUserConfigPasswordReset(rInt int) string {
 resource "gitlab_user" "foo" {
   name             = "foo %d"
   username         = "listest%d"
-  password         = "test%dtt"
   email            = "listest%d@ssss.com"
-  is_admin         = false
-  projects_limit   = 0
-  can_create_group = false
-  is_external      = false
   reset_password   = true
 }
-  `, rInt, rInt, rInt, rInt)
+  `, rInt, rInt, rInt)
+}
+
+func testAccGitlabUserConfigWrong(rInt int) string {
+	return fmt.Sprintf(`
+resource "gitlab_user" "foo" {
+  name             = "foo %d"
+  username         = "listest%d"
+  email            = "listest%d@ssss.com"
+}
+  `, rInt, rInt, rInt)
 }

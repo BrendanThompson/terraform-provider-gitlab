@@ -2,11 +2,12 @@ package gitlab
 
 import (
 	"fmt"
+	"log"
+
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 	"github.com/mitchellh/hashstructure"
 	"github.com/xanzy/go-gitlab"
-	"log"
 )
 
 // Schemas
@@ -156,6 +157,7 @@ func flattenProjects(projects []*gitlab.Project) (values []map[string]interface{
 				"_links":                              flattenProjectLinks(project.Links),
 				"ci_config_path":                      project.CIConfigPath,
 				"custom_attributes":                   project.CustomAttributes,
+				"packages_enabled":                    project.PackagesEnabled,
 			}
 			values = append(values, v)
 		}
@@ -648,6 +650,10 @@ func dataSourceGitlabProjects() *schema.Resource {
 								Type: schema.TypeMap,
 							},
 						},
+						"packages_enabled": {
+							Type:     schema.TypeBool,
+							Computed: true,
+						},
 					},
 				},
 			},
@@ -849,4 +855,20 @@ func dataSourceGitlabProjectsRead(d *schema.ResourceData, meta interface{}) (err
 		}
 	}
 	return err
+}
+
+func flattenSharedWithGroupsOptions(project *gitlab.Project) []interface{} {
+	var sharedWithGroupsList []interface{}
+
+	for _, option := range project.SharedWithGroups {
+		values := map[string]interface{}{
+			"group_id":           option.GroupID,
+			"group_access_level": accessLevelValueToName[gitlab.AccessLevelValue(option.GroupAccessLevel)],
+			"group_name":         option.GroupName,
+		}
+
+		sharedWithGroupsList = append(sharedWithGroupsList, values)
+	}
+
+	return sharedWithGroupsList
 }

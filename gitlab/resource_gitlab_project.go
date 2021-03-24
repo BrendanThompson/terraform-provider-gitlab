@@ -1,8 +1,10 @@
 package gitlab
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
@@ -26,6 +28,10 @@ var resourceGitLabProjectSchema = map[string]*schema.Schema{
 			return old == new
 		},
 	},
+	"path_with_namespace": {
+		Type:     schema.TypeString,
+		Computed: true,
+	},
 	"namespace_id": {
 		Type:     schema.TypeInt,
 		Optional: true,
@@ -39,28 +45,39 @@ var resourceGitLabProjectSchema = map[string]*schema.Schema{
 		Type:     schema.TypeString,
 		Optional: true,
 		DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-			// If the old default branch is empty, it means that the project does not
-			// have a default branch. This can only happen if the project does not have
-			// branches, i.e. it is an empty project. In that case it is useless to
-			// try setting a specific default branch (because no branch exists).
-			// This code will defer the setting of a default branch to a time when the
-			// project is no longer empty.
+			// `old` is the current value on GitLab side
+			// `new` is the value that Terraform plans to set there
+
+			log.Printf("[DEBUG] default_branch DiffSuppressFunc old new")
+			log.Printf("[DEBUG]   (%T) %#v, (%T) %#v", old, old, new, new)
+
+			// If there is no current default branch, it means that the project is
+			// empty and does not have branches. Setting the default branch will fail
+			// with 400 error. The check will defer the setting of a default branch
+			// to a time when the repository is no longer empty.
 			if old == "" {
+				if new != "" {
+					log.Printf("[WARN] not setting default_branch %#v on empty repo", new)
+				}
 				return true
 			}
 
-			// Once the initialize_with_readme attribute is set to true, Gitlab creates
-			// a master branch and sets it as default. If the Gitlab project resource
-			// doesn't have default_branch attribute specified, Terraform will
-			// force "master" => "" on the next run.
-			if v, ok := d.GetOk("initialize_with_readme"); ok {
-				if new == "" && v == true {
-					return true
-				}
+			// For non-empty repositories GitLab automatically sets master as the
+			// default branch. If the project resource doesn't specify default_branch
+			// attribute, Terraform will force "master" => "" on the next run. This
+			// check makes Terraform ignore default branch value until it is set in
+			// .tf configuration. For schema.TypeString empty is equal to "".
+			if new == "" {
+				return true
 			}
 
 			return old == new
 		},
+	},
+	"import_url": {
+		Type:     schema.TypeString,
+		Optional: true,
+		ForceNew: true,
 	},
 	"request_access_enabled": {
 		Type:     schema.TypeBool,
@@ -142,8 +159,9 @@ var resourceGitLabProjectSchema = map[string]*schema.Schema{
 		Computed: true,
 	},
 	"runners_token": {
-		Type:     schema.TypeString,
-		Computed: true,
+		Type:      schema.TypeString,
+		Computed:  true,
+		Sensitive: true,
 	},
 	"shared_runners_enabled": {
 		Type:     schema.TypeBool,
@@ -156,28 +174,6 @@ var resourceGitLabProjectSchema = map[string]*schema.Schema{
 		ForceNew: false,
 		Elem:     &schema.Schema{Type: schema.TypeString},
 		Set:      schema.HashString,
-	},
-	"shared_with_groups": {
-		Type:     schema.TypeSet,
-		Optional: true,
-		Elem: &schema.Resource{
-			Schema: map[string]*schema.Schema{
-				"group_id": {
-					Type:     schema.TypeInt,
-					Required: true,
-				},
-				"group_access_level": {
-					Type:     schema.TypeString,
-					Required: true,
-					ValidateFunc: validation.StringInSlice([]string{
-						"no one", "guest", "reporter", "developer", "maintainer"}, false),
-				},
-				"group_name": {
-					Type:     schema.TypeString,
-					Computed: true,
-				},
-			},
-		},
 	},
 	"archived": {
 		Type:        schema.TypeBool,
@@ -192,6 +188,112 @@ var resourceGitLabProjectSchema = map[string]*schema.Schema{
 	"remove_source_branch_after_merge": {
 		Type:     schema.TypeBool,
 		Optional: true,
+	},
+	"packages_enabled": {
+		Type:     schema.TypeBool,
+		Optional: true,
+		Default:  true,
+	},
+	"push_rules": {
+		Type:     schema.TypeList,
+		MaxItems: 1,
+		Optional: true,
+		Computed: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"author_email_regex": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"branch_name_regex": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"commit_message_regex": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"commit_message_negative_regex": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"file_name_regex": {
+					Type:     schema.TypeString,
+					Optional: true,
+				},
+				"commit_committer_check": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"deny_delete_tag": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"member_check": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"prevent_secrets": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"reject_unsigned_commits": {
+					Type:     schema.TypeBool,
+					Optional: true,
+				},
+				"max_file_size": {
+					Type:         schema.TypeInt,
+					Optional:     true,
+					ValidateFunc: validation.IntAtLeast(0),
+				},
+			},
+		},
+	},
+	"template_name": {
+		Type:          schema.TypeString,
+		Optional:      true,
+		ConflictsWith: []string{"template_project_id"},
+		ForceNew:      true,
+	},
+	"template_project_id": {
+		Type:          schema.TypeInt,
+		Optional:      true,
+		ConflictsWith: []string{"template_name"},
+		ForceNew:      true,
+	},
+	"use_custom_template": {
+		Type:     schema.TypeBool,
+		Optional: true,
+	},
+	"group_with_project_templates_id": {
+		Type:     schema.TypeInt,
+		Optional: true,
+	},
+	"pages_access_level": {
+		Type:         schema.TypeString,
+		Optional:     true,
+		Default:      "private",
+		ValidateFunc: validation.StringInSlice([]string{"public", "private", "enabled", "disabled"}, true),
+	},
+	"mirror": {
+		Type:     schema.TypeBool,
+		Optional: true,
+		Default:  false,
+	},
+	"mirror_trigger_builds": {
+		Type:     schema.TypeBool,
+		Optional: true,
+		Default:  false,
+	},
+	"mirror_overwrites_diverged_branches": {
+		Type:     schema.TypeBool,
+		Optional: true,
+		Default:  false,
+	},
+	"only_mirror_protected_branches": {
+		Type:     schema.TypeBool,
+		Optional: true,
+		Default:  false,
 	},
 }
 
@@ -212,6 +314,7 @@ func resourceGitlabProjectSetToState(d *schema.ResourceData, project *gitlab.Pro
 	d.SetId(fmt.Sprintf("%d", project.ID))
 	d.Set("name", project.Name)
 	d.Set("path", project.Path)
+	d.Set("path_with_namespace", project.PathWithNamespace)
 	d.Set("description", project.Description)
 	d.Set("default_branch", project.DefaultBranch)
 	d.Set("request_access_enabled", project.RequestAccessEnabled)
@@ -233,10 +336,15 @@ func resourceGitlabProjectSetToState(d *schema.ResourceData, project *gitlab.Pro
 	d.Set("web_url", project.WebURL)
 	d.Set("runners_token", project.RunnersToken)
 	d.Set("shared_runners_enabled", project.SharedRunnersEnabled)
-	d.Set("shared_with_groups", flattenSharedWithGroupsOptions(project))
 	d.Set("tags", project.TagList)
 	d.Set("archived", project.Archived)
 	d.Set("remove_source_branch_after_merge", project.RemoveSourceBranchAfterMerge)
+	d.Set("packages_enabled", project.PackagesEnabled)
+	d.Set("pages_access_level", string(project.PagesAccessLevel))
+	d.Set("mirror", project.Mirror)
+	d.Set("mirror_trigger_builds", project.MirrorTriggerBuilds)
+	d.Set("mirror_overwrites_diverged_branches", project.MirrorOverwritesDivergedBranches)
+	d.Set("only_mirror_protected_branches", project.OnlyMirrorProtectedBranches)
 }
 
 func resourceGitlabProjectCreate(d *schema.ResourceData, meta interface{}) error {
@@ -259,54 +367,53 @@ func resourceGitlabProjectCreate(d *schema.ResourceData, meta interface{}) error
 		OnlyAllowMergeIfAllDiscussionsAreResolved: gitlab.Bool(d.Get("only_allow_merge_if_all_discussions_are_resolved").(bool)),
 		SharedRunnersEnabled:                      gitlab.Bool(d.Get("shared_runners_enabled").(bool)),
 		RemoveSourceBranchAfterMerge:              gitlab.Bool(d.Get("remove_source_branch_after_merge").(bool)),
-	}
-
-	// need to manage partial state since project creation may require
-	// more than a single API call, and they may all fail independently;
-	// the default set of attributes is prepopulated with those used above
-	d.Partial(true)
-	setProperties := []string{
-		"name",
-		"request_access_enabled",
-		"issues_enabled",
-		"merge_requests_enabled",
-		"pipelines_enabled",
-		"approvals_before_merge",
-		"wiki_enabled",
-		"snippets_enabled",
-		"container_registry_enabled",
-		"lfs_enabled",
-		"visibility_level",
-		"merge_method",
-		"only_allow_merge_if_pipeline_succeeds",
-		"only_allow_merge_if_all_discussions_are_resolved",
-		"shared_runners_enabled",
-		"remove_source_branch_after_merge",
+		PackagesEnabled:                           gitlab.Bool(d.Get("packages_enabled").(bool)),
+		Mirror:                                    gitlab.Bool(d.Get("mirror").(bool)),
+		MirrorTriggerBuilds:                       gitlab.Bool(d.Get("mirror_trigger_builds").(bool)),
 	}
 
 	if v, ok := d.GetOk("path"); ok {
 		options.Path = gitlab.String(v.(string))
-		setProperties = append(setProperties, "path")
 	}
 
 	if v, ok := d.GetOk("namespace_id"); ok {
 		options.NamespaceID = gitlab.Int(v.(int))
-		setProperties = append(setProperties, "namespace_id")
 	}
 
 	if v, ok := d.GetOk("description"); ok {
 		options.Description = gitlab.String(v.(string))
-		setProperties = append(setProperties, "description")
 	}
 
 	if v, ok := d.GetOk("tags"); ok {
 		options.TagList = stringSetToStringSlice(v.(*schema.Set))
-		setProperties = append(setProperties, "tags")
 	}
 
 	if v, ok := d.GetOk("initialize_with_readme"); ok {
 		options.InitializeWithReadme = gitlab.Bool(v.(bool))
-		setProperties = append(setProperties, "initialize_with_readme")
+	}
+
+	if v, ok := d.GetOk("import_url"); ok {
+		options.ImportURL = gitlab.String(v.(string))
+	}
+
+	if v, ok := d.GetOk("template_name"); ok {
+		options.TemplateName = gitlab.String(v.(string))
+	}
+
+	if v, ok := d.GetOk("template_project_id"); ok {
+		options.TemplateProjectID = gitlab.Int(v.(int))
+	}
+
+	if v, ok := d.GetOk("use_custom_template"); ok {
+		options.UseCustomTemplate = gitlab.Bool(v.(bool))
+	}
+
+	if v, ok := d.GetOk("group_with_project_templates_id"); ok {
+		options.GroupWithProjectTemplatesID = gitlab.Int(v.(int))
+	}
+
+	if v, ok := d.GetOk("pages_access_level"); ok {
+		options.PagesAccessLevel = stringToAccessControlValue(v.(string))
 	}
 
 	log.Printf("[DEBUG] create gitlab project %q", *options.Name)
@@ -316,38 +423,55 @@ func resourceGitlabProjectCreate(d *schema.ResourceData, meta interface{}) error
 		return err
 	}
 
-	for _, setProperty := range setProperties {
-		log.Printf("[DEBUG] partial gitlab project %s creation of property %q", d.Id(), setProperty)
-		d.SetPartial(setProperty)
-	}
-
 	// from this point onwards no matter how we return, resource creation
 	// is committed to state since we set its ID
 	d.SetId(fmt.Sprintf("%d", project.ID))
 
-	if v, ok := d.GetOk("shared_with_groups"); ok {
-		for _, option := range expandSharedWithGroupsOptions(v) {
-			if _, err := client.Projects.ShareProjectWithGroup(project.ID, option); err != nil {
-				return err
-			}
+	if _, ok := d.GetOk("import_url"); ok {
+		log.Printf("[DEBUG] waiting for project %q import to finish", *options.Name)
+
+		stateConf := &resource.StateChangeConf{
+			Pending: []string{"scheduled", "started"},
+			Target:  []string{"finished"},
+			Timeout: 10 * time.Minute,
+			Refresh: func() (interface{}, string, error) {
+				status, _, err := client.ProjectImportExport.ImportStatus(d.Id())
+				if err != nil {
+					return nil, "", err
+				}
+
+				return status, status.ImportStatus, nil
+			},
 		}
-		d.SetPartial("shared_with_groups")
+
+		if _, err := stateConf.WaitForState(); err != nil {
+			return fmt.Errorf("error while waiting for project %q import to finish: %w", *options.Name, err)
+		}
 	}
 
-	v := d.Get("archived")
-	if v.(bool) {
+	if d.Get("archived").(bool) {
 		// strange as it may seem, this project is created in archived state...
-		err := archiveProject(d, meta)
-		if err != nil {
-			log.Printf("[WARN] New project (%s) could not be created in archived state: error %#v", d.Id(), err)
-			return err
+		if _, _, err := client.Projects.ArchiveProject(d.Id()); err != nil {
+			return fmt.Errorf("new project %q could not be archived: %w", d.Id(), err)
 		}
-		d.SetPartial(("archived"))
 	}
 
-	// everything went OK, we can revert to ordinary state management
-	// and let the Gitlab server fill in the resource state via a read
-	d.Partial(false)
+	if _, ok := d.GetOk("push_rules"); ok {
+		err := editOrAddPushRules(client, d.Id(), d)
+		var httpError *gitlab.ErrorResponse
+		if errors.As(err, &httpError) && httpError.Response.StatusCode == http.StatusNotFound {
+			log.Printf("[DEBUG] Failed to edit push rules for project %q: %v", d.Id(), err)
+			return errors.New("Project push rules are not supported in your version of GitLab")
+		}
+		if err != nil {
+			return fmt.Errorf("Failed to edit push rules for project %q: %w", d.Id(), err)
+		}
+	}
+
+	// Some project settings can't be set in the Project Create API and have to
+	// set in a second call after project creation.
+	resourceGitlabProjectUpdate(d, meta)
+
 	return resourceGitlabProjectRead(d, meta)
 }
 
@@ -366,6 +490,19 @@ func resourceGitlabProjectRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	resourceGitlabProjectSetToState(d, project)
+
+	log.Printf("[DEBUG] read gitlab project %q push rules", d.Id())
+
+	pushRules, _, err := client.Projects.GetProjectPushRules(d.Id())
+	var httpError *gitlab.ErrorResponse
+	if errors.As(err, &httpError) && httpError.Response.StatusCode == http.StatusNotFound {
+		log.Printf("[DEBUG] Failed to get push rules for project %q: %v", d.Id(), err)
+	} else if err != nil {
+		return fmt.Errorf("Failed to get push rules for project %q: %w", d.Id(), err)
+	}
+
+	d.Set("push_rules", flattenProjectPushRules(pushRules))
+
 	return nil
 }
 
@@ -375,114 +512,124 @@ func resourceGitlabProjectUpdate(d *schema.ResourceData, meta interface{}) error
 	options := &gitlab.EditProjectOptions{}
 	transferOptions := &gitlab.TransferProjectOptions{}
 
-	// need to manage partial state since project archiving requires
-	// a separate API call which could fail
-	d.Partial(true)
-	updatedProperties := []string{}
-
 	if d.HasChange("name") {
 		options.Name = gitlab.String(d.Get("name").(string))
-		updatedProperties = append(updatedProperties, "name")
 	}
 
 	if d.HasChange("path") && (d.Get("path").(string) != "") {
 		options.Path = gitlab.String(d.Get("path").(string))
-		updatedProperties = append(updatedProperties, "path")
 	}
 
 	if d.HasChange("namespace_id") {
 		transferOptions.Namespace = gitlab.Int(d.Get("namespace_id").(int))
-		updatedProperties = append(updatedProperties, "namespace_id")
 	}
 
 	if d.HasChange("description") {
 		options.Description = gitlab.String(d.Get("description").(string))
-		updatedProperties = append(updatedProperties, "description")
 	}
 
 	if d.HasChange("default_branch") {
 		options.DefaultBranch = gitlab.String(d.Get("default_branch").(string))
-		updatedProperties = append(updatedProperties, "default_branch")
 	}
 
 	if d.HasChange("visibility_level") {
 		options.Visibility = stringToVisibilityLevel(d.Get("visibility_level").(string))
-		updatedProperties = append(updatedProperties, "visibility_level")
 	}
 
 	if d.HasChange("merge_method") {
 		options.MergeMethod = stringToMergeMethod(d.Get("merge_method").(string))
-		updatedProperties = append(updatedProperties, "merge_method")
 	}
 
 	if d.HasChange("only_allow_merge_if_pipeline_succeeds") {
 		options.OnlyAllowMergeIfPipelineSucceeds = gitlab.Bool(d.Get("only_allow_merge_if_pipeline_succeeds").(bool))
-		updatedProperties = append(updatedProperties, "only_allow_merge_if_pipeline_succeeds")
 	}
 
 	if d.HasChange("only_allow_merge_if_all_discussions_are_resolved") {
 		options.OnlyAllowMergeIfAllDiscussionsAreResolved = gitlab.Bool(d.Get("only_allow_merge_if_all_discussions_are_resolved").(bool))
-		updatedProperties = append(updatedProperties, "only_allow_merge_if_all_discussions_are_resolved")
 	}
 
 	if d.HasChange("request_access_enabled") {
 		options.RequestAccessEnabled = gitlab.Bool(d.Get("request_access_enabled").(bool))
-		updatedProperties = append(updatedProperties, "request_access_enabled")
 	}
 
 	if d.HasChange("issues_enabled") {
 		options.IssuesEnabled = gitlab.Bool(d.Get("issues_enabled").(bool))
-		updatedProperties = append(updatedProperties, "issues_enabled")
 	}
 
 	if d.HasChange("merge_requests_enabled") {
 		options.MergeRequestsEnabled = gitlab.Bool(d.Get("merge_requests_enabled").(bool))
-		updatedProperties = append(updatedProperties, "merge_requests_enabled")
 	}
 
 	if d.HasChange("pipelines_enabled") {
 		options.JobsEnabled = gitlab.Bool(d.Get("pipelines_enabled").(bool))
-		updatedProperties = append(updatedProperties, "pipelines_enabled")
 	}
 
 	if d.HasChange("approvals_before_merge") {
 		options.ApprovalsBeforeMerge = gitlab.Int(d.Get("approvals_before_merge").(int))
-		updatedProperties = append(updatedProperties, "approvals_before_merge")
 	}
 
 	if d.HasChange("wiki_enabled") {
 		options.WikiEnabled = gitlab.Bool(d.Get("wiki_enabled").(bool))
-		updatedProperties = append(updatedProperties, "wiki_enabled")
 	}
 
 	if d.HasChange("snippets_enabled") {
 		options.SnippetsEnabled = gitlab.Bool(d.Get("snippets_enabled").(bool))
-		updatedProperties = append(updatedProperties, "snippets_enabled")
 	}
 
 	if d.HasChange("shared_runners_enabled") {
 		options.SharedRunnersEnabled = gitlab.Bool(d.Get("shared_runners_enabled").(bool))
-		updatedProperties = append(updatedProperties, "shared_runners_enabled")
 	}
 
 	if d.HasChange("tags") {
 		options.TagList = stringSetToStringSlice(d.Get("tags").(*schema.Set))
-		updatedProperties = append(updatedProperties, "tags")
 	}
 
 	if d.HasChange("container_registry_enabled") {
 		options.ContainerRegistryEnabled = gitlab.Bool(d.Get("container_registry_enabled").(bool))
-		updatedProperties = append(updatedProperties, "container_registry_enabled")
 	}
 
 	if d.HasChange("lfs_enabled") {
 		options.LFSEnabled = gitlab.Bool(d.Get("lfs_enabled").(bool))
-		updatedProperties = append(updatedProperties, "lfs_enabled")
 	}
 
 	if d.HasChange("remove_source_branch_after_merge") {
 		options.RemoveSourceBranchAfterMerge = gitlab.Bool(d.Get("remove_source_branch_after_merge").(bool))
-		updatedProperties = append(updatedProperties, "remove_source_branch_after_merge")
+	}
+
+	if d.HasChange("packages_enabled") {
+		options.PackagesEnabled = gitlab.Bool(d.Get("packages_enabled").(bool))
+	}
+
+	if d.HasChange("pages_access_level") {
+		options.PagesAccessLevel = stringToAccessControlValue(d.Get("pages_access_level").(string))
+	}
+
+	if d.HasChange("mirror") {
+		// It appears that GitLab API requires that import_url is also set when `mirror` is updated/changed
+		// Ref: https://github.com/gitlabhq/terraform-provider-gitlab/pull/449#discussion_r549729230
+		options.ImportURL = gitlab.String(d.Get("import_url").(string))
+		options.Mirror = gitlab.Bool(d.Get("mirror").(bool))
+	}
+
+	if d.HasChange("mirror_trigger_builds") {
+		// It appears that GitLab API requires that import_url is also set when `mirror_trigger_builds` is updated/changed
+		// Ref: https://github.com/gitlabhq/terraform-provider-gitlab/pull/449#discussion_r549729230
+		options.ImportURL = gitlab.String(d.Get("import_url").(string))
+		options.MirrorTriggerBuilds = gitlab.Bool(d.Get("mirror_trigger_builds").(bool))
+	}
+
+	if d.HasChange("only_mirror_protected_branches") {
+		// It appears that GitLab API requires that import_url is also set when `only_mirror_protected_branches` is updated/changed
+		// Ref: https://github.com/gitlabhq/terraform-provider-gitlab/pull/449#discussion_r549729230
+		options.ImportURL = gitlab.String(d.Get("import_url").(string))
+		options.OnlyMirrorProtectedBranches = gitlab.Bool(d.Get("only_mirror_protected_branches").(bool))
+	}
+
+	if d.HasChange("mirror_overwrites_diverged_branches") {
+		// It appears that GitLab API requires that import_url is also set when `mirror_overwrites_diverged_branches` is updated/changed
+		// Ref: https://github.com/gitlabhq/terraform-provider-gitlab/pull/449#discussion_r549729230
+		options.ImportURL = gitlab.String(d.Get("import_url").(string))
+		options.MirrorOverwritesDivergedBranches = gitlab.Bool(d.Get("mirror_overwrites_diverged_branches").(bool))
 	}
 
 	if *options != (gitlab.EditProjectOptions{}) {
@@ -490,10 +637,6 @@ func resourceGitlabProjectUpdate(d *schema.ResourceData, meta interface{}) error
 		_, _, err := client.Projects.EditProject(d.Id(), options)
 		if err != nil {
 			return err
-		}
-		for _, updatedProperty := range updatedProperties {
-			log.Printf("[DEBUG] partial gitlab project %s update of property %q", d.Id(), updatedProperty)
-			d.SetPartial(updatedProperty)
 		}
 	}
 
@@ -503,38 +646,32 @@ func resourceGitlabProjectUpdate(d *schema.ResourceData, meta interface{}) error
 		if err != nil {
 			return err
 		}
-		log.Printf("[DEBUG] partial gitlab project %s update of property namespace_id", d.Id())
-		d.SetPartial("namespace_id")
-	}
-
-	if d.HasChange("shared_with_groups") {
-		err := updateSharedWithGroups(d, meta)
-		// TODO: check if handling partial state update in this simplistic
-		// way is ok when an error in the "shared groups" API calls occurs
-		if err != nil {
-			d.SetPartial("shared_with_groups")
-		}
 	}
 
 	if d.HasChange("archived") {
-		v := d.Get("archived")
-		if v.(bool) {
-			err := archiveProject(d, meta)
-			if err != nil {
-				log.Printf("[WARN] Project (%s) could not be archived: error %#v", d.Id(), err)
-				return err
+		if d.Get("archived").(bool) {
+			if _, _, err := client.Projects.ArchiveProject(d.Id()); err != nil {
+				return fmt.Errorf("project %q could not be archived: %w", d.Id(), err)
 			}
 		} else {
-			err := unarchiveProject(d, meta)
-			if err != nil {
-				log.Printf("[WARN] Project (%s) could not be unarchived: error %#v", d.Id(), err)
-				return err
+			if _, _, err := client.Projects.UnarchiveProject(d.Id()); err != nil {
+				return fmt.Errorf("project %q could not be unarchived: %w", d.Id(), err)
 			}
 		}
-		d.SetPartial("archived")
 	}
 
-	d.Partial(false)
+	if d.HasChange("push_rules") {
+		err := editOrAddPushRules(client, d.Id(), d)
+		var httpError *gitlab.ErrorResponse
+		if errors.As(err, &httpError) && httpError.Response.StatusCode == http.StatusNotFound {
+			log.Printf("[DEBUG] Failed to get push rules for project %q: %v", d.Id(), err)
+			return errors.New("Project push rules are not supported in your version of GitLab")
+		}
+		if err != nil {
+			return fmt.Errorf("Failed to edit push rules for project %q: %w", d.Id(), err)
+		}
+	}
+
 	return resourceGitlabProjectRead(d, meta)
 }
 
@@ -580,158 +717,152 @@ func resourceGitlabProjectDelete(d *schema.ResourceData, meta interface{}) error
 	return nil
 }
 
-func expandSharedWithGroupsOptions(v interface{}) []*gitlab.ShareWithGroupOptions {
-	shareWithGroupOptionsList := []*gitlab.ShareWithGroupOptions{}
+func editOrAddPushRules(client *gitlab.Client, projectID string, d *schema.ResourceData) error {
+	log.Printf("[DEBUG] Editing push rules for project %q", projectID)
 
-	for _, config := range v.(*schema.Set).List() {
-		data := config.(map[string]interface{})
-
-		groupAccess := accessLevelNameToValue[data["group_access_level"].(string)]
-
-		shareWithGroupOptions := &gitlab.ShareWithGroupOptions{
-			GroupID:     gitlab.Int(data["group_id"].(int)),
-			GroupAccess: &groupAccess,
-		}
-
-		shareWithGroupOptionsList = append(shareWithGroupOptionsList,
-			shareWithGroupOptions)
+	editOptions := expandEditProjectPushRuleOptions(d)
+	_, _, err := client.Projects.EditProjectPushRule(projectID, editOptions)
+	if err == nil {
+		return nil
 	}
 
-	return shareWithGroupOptionsList
-}
-
-func flattenSharedWithGroupsOptions(project *gitlab.Project) []interface{} {
-	sharedWithGroups := project.SharedWithGroups
-	sharedWithGroupsList := []interface{}{}
-
-	for _, option := range sharedWithGroups {
-		values := map[string]interface{}{
-			"group_id": option.GroupID,
-			"group_access_level": accessLevelValueToName[gitlab.AccessLevelValue(
-				option.GroupAccessLevel)],
-			"group_name": option.GroupName,
-		}
-
-		sharedWithGroupsList = append(sharedWithGroupsList, values)
-	}
-
-	return sharedWithGroupsList
-}
-
-func findGroupProjectSharedWith(target *gitlab.ShareWithGroupOptions,
-	groups []*gitlab.ShareWithGroupOptions) (*gitlab.ShareWithGroupOptions, int, error) {
-	for i, group := range groups {
-		if *group.GroupID == *target.GroupID {
-			return group, i, nil
-		}
-	}
-
-	return nil, 0, fmt.Errorf("group not found")
-}
-
-func getGroupsProjectSharedWith(project *gitlab.Project) []*gitlab.ShareWithGroupOptions {
-	sharedGroups := []*gitlab.ShareWithGroupOptions{}
-
-	for _, group := range project.SharedWithGroups {
-		sharedGroups = append(sharedGroups, &gitlab.ShareWithGroupOptions{
-			GroupID: gitlab.Int(group.GroupID),
-			GroupAccess: gitlab.AccessLevel(gitlab.AccessLevelValue(
-				group.GroupAccessLevel)),
-		})
-	}
-
-	return sharedGroups
-}
-
-func updateSharedWithGroups(d *schema.ResourceData, meta interface{}) error {
-	client := meta.(*gitlab.Client)
-
-	var groupsToUnshare []*gitlab.ShareWithGroupOptions
-	var groupsToShare []*gitlab.ShareWithGroupOptions
-
-	// Get target groups from the TF config and current groups from Gitlab server
-	targetGroups := expandSharedWithGroupsOptions(d.Get("shared_with_groups"))
-	project, _, err := client.Projects.GetProject(d.Id(), nil)
-	if err != nil {
+	var httpErr *gitlab.ErrorResponse
+	if !errors.As(err, &httpErr) || httpErr.Response.StatusCode != http.StatusNotFound {
 		return err
 	}
-	currentGroups := getGroupsProjectSharedWith(project)
 
-	for _, targetGroup := range targetGroups {
-		currentGroup, index, err := findGroupProjectSharedWith(targetGroup, currentGroups)
+	// A 404 could mean that the push rules need to be re-created.
 
-		// If no corresponding group is found, it must be added
-		if err != nil {
-			groupsToShare = append(groupsToShare, targetGroup)
-			continue
-		}
+	log.Printf("[DEBUG] Failed to edit push rules for project %q: %v", projectID, err)
+	log.Printf("[DEBUG] Creating new push rules for project %q", projectID)
 
-		// If group is different it must be deleted and added again
-		if *targetGroup.GroupAccess != *currentGroup.GroupAccess {
-			groupsToShare = append(groupsToShare, targetGroup)
-			groupsToUnshare = append(groupsToUnshare, targetGroup)
-		}
-
-		// Remove currentGroup from from list
-		currentGroups = append(currentGroups[:index], currentGroups[index+1:]...)
-	}
-
-	// All groups still present in currentGroup must be deleted
-	groupsToUnshare = append(groupsToUnshare, currentGroups...)
-
-	// Unshare groups to delete and update
-	for _, group := range groupsToUnshare {
-		_, err := client.Projects.DeleteSharedProjectFromGroup(d.Id(), *group.GroupID)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Share groups to add and update
-	for _, group := range groupsToShare {
-		_, err := client.Projects.ShareProjectWithGroup(d.Id(), group)
-		if err != nil {
-			return err
-		}
+	addOptions := expandAddProjectPushRuleOptions(d)
+	_, _, err = client.Projects.AddProjectPushRule(projectID, addOptions)
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// archiveProject calls the Gitlab server to archive a project; if the
-// project is already archived, the call will do nothing (the API is
-// idempotent).
-func archiveProject(d *schema.ResourceData, meta interface{}) error {
-	log.Printf("[TRACE] Project (%s) will be archived", d.Id())
-	client := meta.(*gitlab.Client)
-	out, _, err := client.Projects.ArchiveProject(d.Id())
-	if err != nil {
-		log.Printf("[ERROR] Error archiving project (%s), received %#v", d.Id(), err)
-		return err
+func expandEditProjectPushRuleOptions(d *schema.ResourceData) *gitlab.EditProjectPushRuleOptions {
+	options := &gitlab.EditProjectPushRuleOptions{}
+
+	if d.HasChange("push_rules.0.author_email_regex") {
+		options.AuthorEmailRegex = gitlab.String(d.Get("push_rules.0.author_email_regex").(string))
 	}
-	if !out.Archived {
-		log.Printf("[ERROR] Project (%s) is still not archived", d.Id())
-		return fmt.Errorf("error archiving project (%s): its status on the server is still unarchived", d.Id())
+
+	if d.HasChange("push_rules.0.branch_name_regex") {
+		options.BranchNameRegex = gitlab.String(d.Get("push_rules.0.branch_name_regex").(string))
 	}
-	log.Printf("[TRACE] Project (%s) archived", d.Id())
-	return nil
+
+	if d.HasChange("push_rules.0.commit_message_regex") {
+		options.CommitMessageRegex = gitlab.String(d.Get("push_rules.0.commit_message_regex").(string))
+	}
+
+	if d.HasChange("push_rules.0.commit_message_negative_regex") {
+		options.CommitMessageNegativeRegex = gitlab.String(d.Get("push_rules.0.commit_message_negative_regex").(string))
+	}
+
+	if d.HasChange("push_rules.0.file_name_regex") {
+		options.FileNameRegex = gitlab.String(d.Get("push_rules.0.file_name_regex").(string))
+	}
+
+	if d.HasChange("push_rules.0.commit_committer_check") {
+		options.CommitCommitterCheck = gitlab.Bool(d.Get("push_rules.0.commit_committer_check").(bool))
+	}
+
+	if d.HasChange("push_rules.0.deny_delete_tag") {
+		options.DenyDeleteTag = gitlab.Bool(d.Get("push_rules.0.deny_delete_tag").(bool))
+	}
+
+	if d.HasChange("push_rules.0.member_check") {
+		options.MemberCheck = gitlab.Bool(d.Get("push_rules.0.member_check").(bool))
+	}
+
+	if d.HasChange("push_rules.0.prevent_secrets") {
+		options.PreventSecrets = gitlab.Bool(d.Get("push_rules.0.prevent_secrets").(bool))
+	}
+
+	if d.HasChange("push_rules.0.reject_unsigned_commits") {
+		options.RejectUnsignedCommits = gitlab.Bool(d.Get("push_rules.0.reject_unsigned_commits").(bool))
+	}
+
+	if d.HasChange("push_rules.0.max_file_size") {
+		options.MaxFileSize = gitlab.Int(d.Get("push_rules.0.max_file_size").(int))
+	}
+
+	return options
 }
 
-// unarchiveProject calls the Gitlab server to unarchive a project; if the
-// project is already not archived, the call will do nothing (the API is
-// idempotent).
-func unarchiveProject(d *schema.ResourceData, meta interface{}) error {
-	log.Printf("[INFO] Project (%s) will be unarchived", d.Id())
-	client := meta.(*gitlab.Client)
-	out, _, err := client.Projects.UnarchiveProject(d.Id())
-	if err != nil {
-		log.Printf("[ERROR] Error unarchiving project (%s), received %#v", d.Id(), err)
-		return err
+func expandAddProjectPushRuleOptions(d *schema.ResourceData) *gitlab.AddProjectPushRuleOptions {
+	options := &gitlab.AddProjectPushRuleOptions{}
+
+	if v, ok := d.GetOk("push_rules.0.author_email_regex"); ok {
+		options.AuthorEmailRegex = gitlab.String(v.(string))
 	}
-	if out.Archived {
-		log.Printf("[ERROR] Project (%s) is still archived", d.Id())
-		return fmt.Errorf("error unarchiving project (%s): its status on the server is still archived", d.Id())
+
+	if v, ok := d.GetOk("push_rules.0.branch_name_regex"); ok {
+		options.BranchNameRegex = gitlab.String(v.(string))
 	}
-	log.Printf("[TRACE] Project (%s) unarchived", d.Id())
-	return nil
+
+	if v, ok := d.GetOk("push_rules.0.commit_message_regex"); ok {
+		options.CommitMessageRegex = gitlab.String(v.(string))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.commit_message_negative_regex"); ok {
+		options.CommitMessageNegativeRegex = gitlab.String(v.(string))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.file_name_regex"); ok {
+		options.FileNameRegex = gitlab.String(v.(string))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.commit_committer_check"); ok {
+		options.CommitCommitterCheck = gitlab.Bool(v.(bool))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.deny_delete_tag"); ok {
+		options.DenyDeleteTag = gitlab.Bool(v.(bool))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.member_check"); ok {
+		options.MemberCheck = gitlab.Bool(v.(bool))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.prevent_secrets"); ok {
+		options.PreventSecrets = gitlab.Bool(v.(bool))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.reject_unsigned_commits"); ok {
+		options.RejectUnsignedCommits = gitlab.Bool(v.(bool))
+	}
+
+	if v, ok := d.GetOk("push_rules.0.max_file_size"); ok {
+		options.MaxFileSize = gitlab.Int(v.(int))
+	}
+
+	return options
+}
+
+func flattenProjectPushRules(pushRules *gitlab.ProjectPushRules) (values []map[string]interface{}) {
+	if pushRules == nil {
+		return []map[string]interface{}{}
+	}
+
+	return []map[string]interface{}{
+		{
+			"author_email_regex":            pushRules.AuthorEmailRegex,
+			"branch_name_regex":             pushRules.BranchNameRegex,
+			"commit_message_regex":          pushRules.CommitMessageRegex,
+			"commit_message_negative_regex": pushRules.CommitMessageNegativeRegex,
+			"file_name_regex":               pushRules.FileNameRegex,
+			"commit_committer_check":        pushRules.CommitCommitterCheck,
+			"deny_delete_tag":               pushRules.DenyDeleteTag,
+			"member_check":                  pushRules.MemberCheck,
+			"prevent_secrets":               pushRules.PreventSecrets,
+			"reject_unsigned_commits":       pushRules.RejectUnsignedCommits,
+			"max_file_size":                 pushRules.MaxFileSize,
+		},
+	}
 }
