@@ -27,6 +27,7 @@ resource "gitlab_repository_file" "this" {
     project        = gitlab_project.this.id
     file           = "meow.txt"
     content        = base64encode("Meow goes the cat")
+    encoding       = "base64"
     branch         = "master"
     author_name    = "Terraform"
     author_email   = "terraform@example.com"
@@ -42,7 +43,9 @@ The following arguments are supported:
 
 * `file` - (Required) The full path of the file.
 
-* `content` - (Required) Base64 encoded string.
+* `content` - (Required) The file content as a string. Can also be a base64 encoded string if `encoding` is set.
+
+* `encoding` - (Optional) Change encoding to base64. 
 
 * `branch` - (Required) Name of the branch to which to commit to.
 

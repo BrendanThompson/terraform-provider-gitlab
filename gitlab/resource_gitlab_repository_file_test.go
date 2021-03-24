@@ -19,13 +19,38 @@ func TestAccGitlabRepositoryFile_basic(t *testing.T) {
 		Providers:    testAccProviders,
 		CheckDestroy: testAccCheckGitlabRepositoryFileDestroy,
 		Steps: []resource.TestStep{
+			// Create a text repository file
 			{
 				Config: testAccGitlabRepositoryFileConfig(rInt),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabRepositoryFileExists("gitlab_repository_file.this", &file),
 					testAccCheckGitlabRepositoryFileAttributes(&file, &testAccGitlabRepositoryFileAttributes{
 						FileName: "meow.txt",
+						Content:  "meow",
+					}),
+				),
+			},
+			// Create a base64 repository file
+			{
+				Config: testAccGitlabRepositoryFileBase64Config(rInt),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckGitlabRepositoryFileExists("gitlab_repository_file.this", &file),
+					testAccCheckGitlabRepositoryFileAttributes(&file, &testAccGitlabRepositoryFileAttributes{
+						FileName: "meow.txt",
 						Content:  "bWVvdyBtZW93IG1lb3c=",
+						Encoding: "base64",
+					}),
+				),
+			},
+			// Update a repository file
+			{
+				Config: testAccGitlabRepositoryFileUpdateConfig(rInt),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckGitlabRepositoryFileExists("gitlab_repository_file.this", &file),
+					testAccCheckGitlabRepositoryFileAttributes(&file, &testAccGitlabRepositoryFileAttributes{
+						FileName: "woof.txt",
+						Content:  "d29vZgo=",
+						Encoding: "base64",
 					}),
 				),
 			},
@@ -71,6 +96,7 @@ func testAccCheckGitlabRepositoryFileExists(n string, file *gitlab.File) resourc
 type testAccGitlabRepositoryFileAttributes struct {
 	FileName string
 	Content  string
+	Encoding string
 }
 
 func testAccCheckGitlabRepositoryFileAttributes(got *gitlab.File, want *testAccGitlabRepositoryFileAttributes) resource.TestCheckFunc {
@@ -81,6 +107,10 @@ func testAccCheckGitlabRepositoryFileAttributes(got *gitlab.File, want *testAccG
 
 		if got.Content != want.Content {
 			return fmt.Errorf("got content %q; want %q", got.Content, want.Content)
+		}
+
+		if got.Encoding != want.Encoding {
+			return fmt.Errorf("got Encoding %q; want %q", got.Encoding, want.Encoding)
 		}
 		return nil
 	}
@@ -125,7 +155,57 @@ func testAccGitlabRepositoryFileConfig(rInt int) string {
 	resource "gitlab_repository_file" "this" {
 	  project = "${gitlab_project.foo.id}"
 	  file = "meow.txt"
-	  content = "bWVvdyBtZW93IG1lb3c="
+		content = "meow"
+	  branch = "master"
+	  author_name = "Meow Meowington"
+	  author_email = "meow@catnip.com"
+	  commit_message = "feature: add launch codes"
+	}
+		`, rInt)
+}
+
+func testAccGitlabRepositoryFileBase64Config(rInt int) string {
+	return fmt.Sprintf(`
+	resource "gitlab_project" "foo" {
+	  name = "foo-%d"
+	  description = "Terraform acceptance tests"
+	
+	  # So that acceptance tests can be run in a gitlab organization
+	  # with no billing
+	  visibility_level = "public"
+	  initialize_with_readme = true
+	}
+	
+	resource "gitlab_repository_file" "this" {
+	  project = "${gitlab_project.foo.id}"
+	  file = "meow.txt"
+		content = "bWVvdyBtZW93IG1lb3c="
+		encoding = "base64"
+	  branch = "master"
+	  author_name = "Meow Meowington"
+	  author_email = "meow@catnip.com"
+	  commit_message = "feature: add launch codes"
+	}
+		`, rInt)
+}
+
+func testAccGitlabRepositoryFileUpdateConfig(rInt int) string {
+	return fmt.Sprintf(`
+	resource "gitlab_project" "foo" {
+	  name = "foo-%d"
+	  description = "Terraform acceptance tests"
+	
+	  # So that acceptance tests can be run in a gitlab organization
+	  # with no billing
+	  visibility_level = "public"
+	  initialize_with_readme = true
+	}
+	
+	resource "gitlab_repository_file" "this" {
+	  project = "${gitlab_project.foo.id}"
+	  file = "woof.txt"
+		content = "bWVvdyBtZW93IG1lb3c="
+		encoding = "base64"
 	  branch = "master"
 	  author_name = "Meow Meowington"
 	  author_email = "meow@catnip.com"
