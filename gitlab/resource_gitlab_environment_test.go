@@ -34,7 +34,7 @@ func TestAccGitlabEnvironment_basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabEnvironmentExists("gitlab_environment.environment", &environment),
 					testAccCheckGitlabEnvironmentAttributes(&environment, &testAccGitlabEnvironmentAttributes{
-						Name: "meow",
+						Name: "woof",
 					}),
 				),
 			},
@@ -148,7 +148,7 @@ func testAccGitlabEnvironmentConfigNameOnly(rInt int) string {
 	  
 	  resource "gitlab_environment" "environment" {
 		  project = "${gitlab_project.foo.id}"
-		  name = "meow"
+		  name = "woof"
 	  }
 		  `, rInt)
 }

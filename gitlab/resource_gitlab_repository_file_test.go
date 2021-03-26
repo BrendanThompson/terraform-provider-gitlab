@@ -25,7 +25,7 @@ func TestAccGitlabRepositoryFile_basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabRepositoryFileExists("gitlab_repository_file.this", &file),
 					testAccCheckGitlabRepositoryFileAttributes(&file, &testAccGitlabRepositoryFileAttributes{
-						FileName: "meow.txt",
+						FileName: "kitty.txt",
 						Content:  "meow",
 					}),
 				),
@@ -154,7 +154,7 @@ func testAccGitlabRepositoryFileConfig(rInt int) string {
 	
 	resource "gitlab_repository_file" "this" {
 	  project = "${gitlab_project.foo.id}"
-	  file_path = "meow.txt"
+	  file_path = "kitty.txt"
 	  content = "meow"
 	  branch = "master"
 	  author_name = "Meow Meowington"
