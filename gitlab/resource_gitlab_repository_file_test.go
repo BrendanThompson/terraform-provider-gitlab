@@ -154,7 +154,7 @@ func testAccGitlabRepositoryFileConfig(rInt int) string {
 	
 	resource "gitlab_repository_file" "this" {
 	  project = "${gitlab_project.foo.id}"
-	  file = "meow.txt"
+	  file_path = "meow.txt"
 	  content = "meow"
 	  branch = "master"
 	  author_name = "Meow Meowington"
@@ -178,7 +178,7 @@ func testAccGitlabRepositoryFileBase64Config(rInt int) string {
 	
 	resource "gitlab_repository_file" "this" {
 	  project = "${gitlab_project.foo.id}"
-	  file = "meow.txt"
+	  file_path = "meow.txt"
 		content = "bWVvdyBtZW93IG1lb3c="
 		encoding = "base64"
 	  branch = "master"
@@ -203,7 +203,7 @@ func testAccGitlabRepositoryFileUpdateConfig(rInt int) string {
 	
 	resource "gitlab_repository_file" "this" {
 	  project = "${gitlab_project.foo.id}"
-	  file = "woof.txt"
+	  file_path = "woof.txt"
 		content = "bWVvdyBtZW93IG1lb3c="
 		encoding = "base64"
 	  branch = "master"
