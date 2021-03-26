@@ -119,28 +119,24 @@ func resourceGitlabRepositoryFileUpdate(d *schema.ResourceData, meta interface{}
 		options.Branch = gitlab.String(d.Get("branch").(string))
 	}
 
-	authorEmailData, authorEmailOk := d.GetOk("author_email")
-	if authorEmailOk {
+	if authorEmailData, authorEmailOk := d.GetOk("author_email"); authorEmailOk {
 		options.AuthorEmail = gitlab.String(authorEmailData.(string))
 	}
 
-	authorNameData, authorNameOk := d.GetOk("author_name")
-	if authorNameOk {
+	if authorNameData, authorNameOk := d.GetOk("author_name"); authorNameOk {
 		options.AuthorName = gitlab.String(authorNameData.(string))
 	}
 
-	contentData, contentOk := d.GetOk("content")
-	if contentOk {
+	if contentData, contentOk := d.GetOk("content"); contentOk {
 		options.Content = gitlab.String(contentData.(string))
 	}
 
-	commitMessageData, commitMessageOk := d.GetOk("commit_message")
-	if commitMessageOk {
+	if commitMessageData, commitMessageOk := d.GetOk("commit_message"); commitMessageOk {
 		options.CommitMessage = gitlab.String(commitMessageData.(string))
 	}
 
-	if encoding, ok := d.GetOk("encoding"); ok {
-		options.Encoding = gitlab.String(encoding.(string))
+	if encodingData, encodingOk := d.GetOk("encoding"); encodingOk {
+		options.Encoding = gitlab.String(encodingData.(string))
 	}
 
 	_, _, err := client.RepositoryFiles.UpdateFile(project, filePath, options)
