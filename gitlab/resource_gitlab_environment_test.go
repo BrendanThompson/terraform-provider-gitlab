@@ -34,7 +34,7 @@ func TestAccGitlabEnvironment_basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabEnvironmentExists("gitlab_environment.environment", &environment),
 					testAccCheckGitlabEnvironmentAttributes(&environment, &testAccGitlabEnvironmentAttributes{
-						Name: "woof",
+						Name: "meow",
 					}),
 				),
 			},
@@ -56,7 +56,6 @@ func testAccCheckGitlabEnvironmentExists(n string, environment *gitlab.Environme
 		}
 
 		conn := testAccProvider.Meta().(*gitlab.Client)
-
 		environments, _, err := conn.Environments.ListEnvironments(project, nil)
 		if err != nil {
 			return err
@@ -137,8 +136,8 @@ func testAccGitlabEnvironmentConfig(rInt int) string {
 
 func testAccGitlabEnvironmentConfigNameOnly(rInt int) string {
 	return fmt.Sprintf(`
-	resource "gitlab_project" "foo" {
-		name = "foo-%d"
+	resource "gitlab_project" "bar" {
+		name = "bar-%d"
 		description = "Terraform acceptance tests"
 	  
 		# So that acceptance tests can be run in a gitlab organization
@@ -147,8 +146,8 @@ func testAccGitlabEnvironmentConfigNameOnly(rInt int) string {
 	  }
 	  
 	  resource "gitlab_environment" "environment" {
-		  project = "${gitlab_project.foo.id}"
-		  name = "woof"
+		  project = "${gitlab_project.bar.id}"
+		  name = "meow"
 	  }
 		  `, rInt)
 }
