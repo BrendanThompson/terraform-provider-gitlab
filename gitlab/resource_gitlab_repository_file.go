@@ -49,7 +49,6 @@ func resourceGitlabRepositoryFile() *schema.Resource {
 			"encoding": {
 				Type:     schema.TypeString,
 				Optional: true,
-				Default:  "text",
 			},
 		},
 	}

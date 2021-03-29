@@ -49,8 +49,11 @@ func resourceGitlabEnvironmentCreate(d *schema.ResourceData, meta interface{}) e
 	client := meta.(*gitlab.Client)
 	project := d.Get("project").(string)
 	options := &gitlab.CreateEnvironmentOptions{
-		Name:        gitlab.String(d.Get("name").(string)),
-		ExternalURL: gitlab.String(d.Get("external_url").(string)),
+		Name: gitlab.String(d.Get("name").(string)),
+	}
+
+	if externalURL, ok := d.GetOk("external_url"); ok {
+		options.ExternalURL = gitlab.String(externalURL.(string))
 	}
 
 	environment, _, err := client.Environments.CreateEnvironment(project, options)

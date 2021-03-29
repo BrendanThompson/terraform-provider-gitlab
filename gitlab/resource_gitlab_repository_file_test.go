@@ -30,18 +30,6 @@ func TestAccGitlabRepositoryFile_basic(t *testing.T) {
 					}),
 				),
 			},
-			// Create a base64 repository file
-			{
-				Config: testAccGitlabRepositoryFileBase64Config(rInt),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckGitlabRepositoryFileExists("gitlab_repository_file.this", &file),
-					testAccCheckGitlabRepositoryFileAttributes(&file, &testAccGitlabRepositoryFileAttributes{
-						FileName: "meow.txt",
-						Content:  "bWVvdyBtZW93IG1lb3c=",
-						Encoding: "base64",
-					}),
-				),
-			},
 			// Update a repository file
 			{
 				Config: testAccGitlabRepositoryFileUpdateConfig(rInt),
@@ -141,30 +129,6 @@ func testAccCheckGitlabRepositoryFileDestroy(s *terraform.State) error {
 }
 
 func testAccGitlabRepositoryFileConfig(rInt int) string {
-	return fmt.Sprintf(`
-	resource "gitlab_project" "foo" {
-	  name = "foo-%d"
-	  description = "Terraform acceptance tests"
-	
-	  # So that acceptance tests can be run in a gitlab organization
-	  # with no billing
-	  visibility_level = "public"
-	  initialize_with_readme = true
-	}
-	
-	resource "gitlab_repository_file" "this" {
-	  project = "${gitlab_project.foo.id}"
-	  file_path = "kitty.txt"
-	  content = "meow"
-	  branch = "master"
-	  author_name = "Meow Meowington"
-	  author_email = "meow@catnip.com"
-	  commit_message = "feature: add launch codes"
-	}
-		`, rInt)
-}
-
-func testAccGitlabRepositoryFileBase64Config(rInt int) string {
 	return fmt.Sprintf(`
 	resource "gitlab_project" "foo" {
 	  name = "foo-%d"
