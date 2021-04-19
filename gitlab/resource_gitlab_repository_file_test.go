@@ -26,7 +26,7 @@ func TestAccGitlabRepositoryFile_basic(t *testing.T) {
 					testAccCheckGitlabRepositoryFileExists("gitlab_repository_file.this", &file),
 					testAccCheckGitlabRepositoryFileAttributes(&file, &testAccGitlabRepositoryFileAttributes{
 						FileName: "kitty.txt",
-						Content:  "bWVvdwo=",
+						Content:  "bWVvdw==",
 					}),
 				),
 			},
