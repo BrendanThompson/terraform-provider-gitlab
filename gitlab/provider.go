@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/httpclient"
 	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 )
 
@@ -12,7 +13,7 @@ import (
 func Provider() terraform.ResourceProvider {
 
 	// The actual provider
-	return &schema.Provider{
+	provider := &schema.Provider{
 		Schema: map[string]*schema.Schema{
 			"token": {
 				Type:        schema.TypeString,
@@ -54,11 +55,12 @@ func Provider() terraform.ResourceProvider {
 		},
 
 		DataSourcesMap: map[string]*schema.Resource{
-			"gitlab_group":    dataSourceGitlabGroup(),
-			"gitlab_project":  dataSourceGitlabProject(),
-			"gitlab_projects": dataSourceGitlabProjects(),
-			"gitlab_user":     dataSourceGitlabUser(),
-			"gitlab_users":    dataSourceGitlabUsers(),
+			"gitlab_group":            dataSourceGitlabGroup(),
+			"gitlab_group_membership": dataSourceGitlabGroupMembership(),
+			"gitlab_project":          dataSourceGitlabProject(),
+			"gitlab_projects":         dataSourceGitlabProjects(),
+			"gitlab_user":             dataSourceGitlabUser(),
+			"gitlab_users":            dataSourceGitlabUsers(),
 		},
 
 		ResourcesMap: map[string]*schema.Resource{
@@ -72,7 +74,6 @@ func Provider() terraform.ResourceProvider {
 			"gitlab_pipeline_schedule_variable": resourceGitlabPipelineScheduleVariable(),
 			"gitlab_pipeline_trigger":           resourceGitlabPipelineTrigger(),
 			"gitlab_project_hook":               resourceGitlabProjectHook(),
-			"gitlab_project_push_rules":         resourceGitlabProjectPushRules(),
 			"gitlab_deploy_key":                 resourceGitlabDeployKey(),
 			"gitlab_deploy_key_enable":          resourceGitlabDeployEnableKey(),
 			"gitlab_deploy_token":               resourceGitlabDeployToken(),
@@ -85,15 +86,27 @@ func Provider() terraform.ResourceProvider {
 			"gitlab_service_slack":              resourceGitlabServiceSlack(),
 			"gitlab_service_jira":               resourceGitlabServiceJira(),
 			"gitlab_service_github":             resourceGitlabServiceGithub(),
+			"gitlab_service_pipelines_email":    resourceGitlabServicePipelinesEmail(),
 			"gitlab_project_share_group":        resourceGitlabProjectShareGroup(),
 			"gitlab_group_cluster":              resourceGitlabGroupCluster(),
 			"gitlab_group_ldap_link":            resourceGitlabGroupLdapLink(),
 			"gitlab_repository_file":            resourceGitlabRepositoryFile(),
 			"gitlab_environment":                resourceGitlabEnvironment(),
+			"gitlab_instance_cluster":           resourceGitlabInstanceCluster(),
+			"gitlab_project_mirror":             resourceGitlabProjectMirror(),
+			"gitlab_project_level_mr_approvals": resourceGitlabProjectLevelMRApprovals(),
+			"gitlab_project_approval_rule":      resourceGitlabProjectApprovalRule(),
+			"gitlab_instance_variable":          resourceGitlabInstanceVariable(),
+			"gitlab_project_freeze_period":      resourceGitlabProjectFreezePeriod(),
+			"gitlab_group_share_group":          resourceGitlabGroupShareGroup(),
 		},
-
-		ConfigureFunc: providerConfigure,
 	}
+
+	provider.ConfigureFunc = func(d *schema.ResourceData) (interface{}, error) {
+		return providerConfigure(provider, d)
+	}
+
+	return provider
 }
 
 var descriptions map[string]string
@@ -114,7 +127,7 @@ func init() {
 	}
 }
 
-func providerConfigure(d *schema.ResourceData) (interface{}, error) {
+func providerConfigure(p *schema.Provider, d *schema.ResourceData) (interface{}, error) {
 	config := Config{
 		Token:      d.Get("token").(string),
 		BaseURL:    d.Get("base_url").(string),
@@ -124,13 +137,22 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		ClientKey:  d.Get("client_key").(string),
 	}
 
-	return config.Client()
+	client, err := config.Client()
+	if err != nil {
+		return nil, err
+	}
+
+	// NOTE: httpclient.TerraformUserAgent is deprecated and removed in Terraform SDK v2
+	// After upgrading the SDK to v2 replace with p.UserAgent("terraform-provider-gitlab")
+	client.UserAgent = httpclient.TerraformUserAgent(p.TerraformVersion) + " terraform-provider-gitlab"
+
+	return client, err
 }
 
 func validateApiURLVersion(value interface{}, key string) (ws []string, es []error) {
 	v := value.(string)
 	if strings.HasSuffix(v, "/api/v3") || strings.HasSuffix(v, "/api/v3/") {
-		es = append(es, fmt.Errorf("terraform-gitlab-provider does not support v3 api; please upgrade to /api/v4 in %s", v))
+		es = append(es, fmt.Errorf("terraform-provider-gitlab does not support v3 api; please upgrade to /api/v4 in %s", v))
 	}
 	return
 }

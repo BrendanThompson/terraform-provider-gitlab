@@ -34,7 +34,8 @@ func TestAccGitlabEnvironment_basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckGitlabEnvironmentExists("gitlab_environment.environment", &environment),
 					testAccCheckGitlabEnvironmentAttributes(&environment, &testAccGitlabEnvironmentAttributes{
-						Name: "meow",
+						Name:        "meow",
+						ExternalURL: "",
 					}),
 				),
 			},
@@ -56,7 +57,6 @@ func testAccCheckGitlabEnvironmentExists(n string, environment *gitlab.Environme
 		}
 
 		conn := testAccProvider.Meta().(*gitlab.Client)
-
 		environments, _, err := conn.Environments.ListEnvironments(project, nil)
 		if err != nil {
 			return err

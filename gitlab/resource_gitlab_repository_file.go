@@ -46,6 +46,10 @@ func resourceGitlabRepositoryFile() *schema.Resource {
 				Type:     schema.TypeString,
 				Required: true,
 			},
+			"encoding": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
@@ -61,7 +65,10 @@ func resourceGitlabRepositoryFileCreate(d *schema.ResourceData, meta interface{}
 		AuthorName:    gitlab.String(d.Get("author_name").(string)),
 		Content:       gitlab.String(d.Get("content").(string)),
 		CommitMessage: gitlab.String(d.Get("commit_message").(string)),
-		Encoding:      gitlab.String("base64"),
+	}
+
+	if encoding, ok := d.GetOk("encoding"); ok {
+		options.Encoding = gitlab.String(encoding.(string))
 	}
 
 	repositoryFile, _, err := client.RepositoryFiles.CreateFile(project, filePath, options)
@@ -105,7 +112,6 @@ func resourceGitlabRepositoryFileUpdate(d *schema.ResourceData, meta interface{}
 		AuthorName:    gitlab.String(d.Get("author_name").(string)),
 		Content:       gitlab.String(d.Get("content").(string)),
 		CommitMessage: gitlab.String(d.Get("commit_message").(string)),
-		Encoding:      gitlab.String("base64"),
 		//TODO: add LastCommitID
 	}
 
@@ -113,21 +119,26 @@ func resourceGitlabRepositoryFileUpdate(d *schema.ResourceData, meta interface{}
 		options.Branch = gitlab.String(d.Get("branch").(string))
 	}
 
-	if d.HasChange("author_email") {
-		options.AuthorEmail = gitlab.String(d.Get("author_email").(string))
+	if authorEmailData, authorEmailOk := d.GetOk("author_email"); authorEmailOk {
+		options.AuthorEmail = gitlab.String(authorEmailData.(string))
 	}
 
-	if d.HasChange("author_name") {
-		options.AuthorName = gitlab.String(d.Get("author_name").(string))
+	if authorNameData, authorNameOk := d.GetOk("author_name"); authorNameOk {
+		options.AuthorName = gitlab.String(authorNameData.(string))
 	}
 
-	if d.HasChange("content") {
-		options.Content = gitlab.String(d.Get("content").(string))
+	if contentData, contentOk := d.GetOk("content"); contentOk {
+		options.Content = gitlab.String(contentData.(string))
 	}
 
-	if d.HasChange("commit_message") {
-		options.CommitMessage = gitlab.String(d.Get("commit_message").(string))
+	if commitMessageData, commitMessageOk := d.GetOk("commit_message"); commitMessageOk {
+		options.CommitMessage = gitlab.String(commitMessageData.(string))
 	}
+
+	if encodingData, encodingOk := d.GetOk("encoding"); encodingOk {
+		options.Encoding = gitlab.String(encodingData.(string))
+	}
+
 	_, _, err := client.RepositoryFiles.UpdateFile(project, filePath, options)
 	if err != nil {
 		return err
